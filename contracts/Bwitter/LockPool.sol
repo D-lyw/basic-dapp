@@ -1046,6 +1046,7 @@ library Math {
     }
 }
 
+// Bt锁仓挖矿合约
 contract LockPool is Ownable {
     using SafeMath for uint256;
     IERC20 private stakeToken;
