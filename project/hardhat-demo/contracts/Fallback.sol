@@ -2,7 +2,7 @@
 pragma solidity ^0.8.0;
 
 contract Fallback {
-    event Log(uint gas);
+    event Log(uint256 gas);
 
     // Fallback function must be declared as external.
     fallback() external payable {
@@ -12,14 +12,17 @@ contract Fallback {
     }
 
     // Helper function to check the balance of this contract
-    function getBalance() public view returns (uint) {
+    function getBalance() public view returns (uint256) {
         return address(this).balance;
     }
 }
 
 contract SendToFallback {
+    event Log(uint256 gas);
+
     function transferToFallback(address payable _to) public payable {
         _to.transfer(msg.value);
+        emit Log(gasleft());
     }
 
     function callFallback(address payable _to) public payable {
@@ -27,6 +30,7 @@ contract SendToFallback {
         require(sent, "Failed to send Ether");
     }
 
-    fallback() external payable{}
-    receive() external payable{}
+    fallback() external payable {}
+
+    receive() external payable {}
 }
