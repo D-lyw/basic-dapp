@@ -1,7 +1,7 @@
+require('@nomiclabs/hardhat-waffle')
 const { ethers } = require('hardhat')
 const { expect } = require("chai")
 
-require('@nomiclabs/hardhat-waffle')
 
 describe("Function Selector", () => {
   let functionCaller
