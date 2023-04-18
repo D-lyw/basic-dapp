@@ -1,2 +1,1 @@
-# basic-dapp
-Dapp 开发入门
+# Smart Contract Learning and Some Demos

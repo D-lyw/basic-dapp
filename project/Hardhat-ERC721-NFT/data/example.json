@@ -1,0 +1,34 @@
+{
+  "name": "RSS3 Whitepaper v1.0",
+  "description": "RSS3 Whitepaper v1.0 - Commemorative & Limited Edition",
+  "external_link": "https://rss3.io/RSS3-Whitepaper.pdf",
+  "attributes": [
+    {
+      "trait_type": "Author(s)",
+      "value": "Natural Selection Labs"
+    },
+    {
+      "trait_type": "Edition",
+      "value": "First Edition"
+    },
+    {
+      "trait_type": "Edition Language",
+      "value": "English"
+    },
+    {
+      "trait_type": "File Format",
+      "value": "PDF"
+    },
+    {
+      "trait_type": "No.",
+      "value": 1
+    },
+    {
+      "trait_type": "Released Data",
+      "value": 1610323200,
+      "display_type": "date"
+    }
+  ],
+  "image": "ipfs://bafybeialcb7udgz56dtpzn7dcchujd5jt6jcu7ugg4y32e2jsvg3z477fq/rss3-whitepaper-no-1.png",
+  "animation_url": "ipfs://bafybeif2wobpdjlkv7k33k2at4agirvmrs5zqa7hm4wvz72teui6bttg7y/rss3-whitepaper-no-1.glb"
+}

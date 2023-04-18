@@ -14,4 +14,8 @@ contract Wallet {
         require(msg.sender == owner, "sender is not owner");
         owner.transfer(_amount);
     }
+
+    function sendByAddressFunction(address payable _address, uint256 _amount) public {
+      payable(_address).transfer(_amount);
+    }
 }

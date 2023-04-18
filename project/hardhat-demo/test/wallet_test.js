@@ -7,8 +7,9 @@ describe('Wallet', () => {
   let wallet
   let owner
   let addr1
+  let addr2
   before(async () => {
-    ;[owner, addr1] = await ethers.getSigners()
+    ;[owner, addr1, addr2] = await ethers.getSigners()
     const Wallet = await ethers.getContractFactory('Wallet')
     wallet = await Wallet.deploy()
   })
@@ -31,5 +32,19 @@ describe('Wallet', () => {
 
   it('Not owner withdraw', async () => {
     await expect(wallet.connect(addr1).withdraw()).to.be.reverted
+  })
+
+  it("Send Ether By Address's Function", async () => {
+    console.log(
+      'Contract balance: ',
+      utils.formatEther(await ethers.provider.getBalance(wallet.address))
+    )
+    console.log('Addr1: ', utils.formatUnits(await addr1.getBalance()))
+    await wallet.sendByAddressFunction(addr1.address, 5000)
+    console.log(
+      'Contract balance: ',
+      utils.formatEther(await ethers.provider.getBalance(wallet.address))
+    )
+    console.log('Addr1: ', utils.formatUnits(await addr1.getBalance())) 
   })
 })
