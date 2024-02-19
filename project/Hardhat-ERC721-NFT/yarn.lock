@@ -2624,6 +2624,11 @@ clone@2.1.2, clone@^2.0.0:
   resolved "https://registry.yarnpkg.com/clone/-/clone-2.1.2.tgz#1b7f4b9f591f1e8f83670401600345a02887435f"
   integrity sha1-G39Ln1kfHo+DZwQBYANFoCiHQ18=
 
+closedsea@^1.0.0:
+  version "1.0.0"
+  resolved "https://registry.npmmirror.com/closedsea/-/closedsea-1.0.0.tgz#aeee6a266da6e1e53feca5096c8140561a7c6958"
+  integrity sha512-LIE4wGquD1DwpNU8+7zm7jBxXg4/iyFYHjyoGi1auLL7C5trU9IBcK6sagazm7/J0j4JK6a0gFjXMVMDePz20g==
+
 code-point-at@^1.0.0:
   version "1.1.0"
   resolved "https://registry.yarnpkg.com/code-point-at/-/code-point-at-1.1.0.tgz#0d070b4d043a5bea33a2f1a40e2edb3d9a4ccf77"
@@ -3254,6 +3259,11 @@ env-paths@^2.2.0:
   version "2.2.1"
   resolved "https://registry.yarnpkg.com/env-paths/-/env-paths-2.2.1.tgz#420399d416ce1fbe9bc0a07c62fa68d67fd0f8f2"
   integrity sha512-+h1lkLKhZMTYjog1VEpJNG7NZJWcuc2DDk/qsqSTRRCOXiLjeQ1d1/udrUGhqMxUgAlwKNZ0cf2uqan5GLuS2A==
+
+erc721a@^4.2.3:
+  version "4.2.3"
+  resolved "https://registry.npmmirror.com/erc721a/-/erc721a-4.2.3.tgz#ca6469b0e54afb0f614272c2147dc4cb49ff223f"
+  integrity sha512-0deF0hOOK1XI1Vxv3NKDh2E9sgzRlENuOoexjXRJIRfYCsLlqi9ejl2RF6Wcd9HfH0ldqC03wleQ2WDjxoOUvA==
 
 errno@~0.1.1:
   version "0.1.8"

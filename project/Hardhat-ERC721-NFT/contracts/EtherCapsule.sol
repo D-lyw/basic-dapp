@@ -3,11 +3,13 @@ pragma solidity ^0.8.20;
 
 // https://etherscan.io/address/0x6c952af158ec8d0fd94908e389c084394d9aebbb#code#F1#L127
 
-import {ERC721A} from "erc721a/ERC721A.sol";
+// import {ERC721A} from "erc721a/ERC721A.sol";
+import "erc721a/contracts/ERC721A.sol";
+
 import {ERC2981} from "@openzeppelin/contracts/token/common/ERC2981.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
-import {OperatorFilterer} from "closedsea/OperatorFilterer.sol";
+import "closedsea/src/OperatorFilterer.sol";
 
 import {IDelegationRegistry} from "./IDelegationRegistry.sol";
 
