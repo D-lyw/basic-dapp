@@ -1,3 +1,7 @@
 {
-  "solidity.compileUsingRemoteVersion": "v0.8.21+commit.d9974bed"
+  "solidity.compileUsingRemoteVersion": "v0.8.21+commit.d9974bed",
+  "rust-analyzer.linkedProjects": [
+    "./nervos/ckb-script/Cargo.toml",
+    "./nervos/ckb-hands-on/Cargo.toml"
+  ]
 }
