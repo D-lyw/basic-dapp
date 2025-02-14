@@ -57,7 +57,7 @@ fn test_carrot_script() {
     ];
 
     // prepare output cell data
-    let outputs_data = vec![Bytes::from("apple"), Bytes::from("orange")];
+    let outputs_data = vec![Bytes::from("apple"), Bytes::from("carrot")];
 
     // build transaction
     let tx = TransactionBuilder::default()
