@@ -1,3 +1,9 @@
 [submodule "project/permit2/lib/forge-std"]
 	path = project/permit2/lib/forge-std
 	url = https://github.com/foundry-rs/forge-std
+[submodule "project/permit2/lib/openzeppelin-contracts"]
+	path = project/permit2/lib/openzeppelin-contracts
+	url = https://github.com/OpenZeppelin/openzeppelin-contracts
+[submodule "project/permit2/lib/permit2"]
+	path = project/permit2/lib/permit2
+	url = https://github.com/Uniswap/permit2
