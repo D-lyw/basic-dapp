@@ -1,22 +1,15 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.17;
 
-import "@openzeppelin/contracts/utils/math/SafeCast.sol";
-import {SignatureTransfer} from "./lib/permit2/src/SignatureTransfer.sol";
-import {ISignatureTransfer} from "./lib/permit2/src/interfaces/ISignatureTransfer.sol";
-import {EIP712} from "./lib/permit2/src/EIP712.sol";
-import {IAllowanceTransfer} from "./lib/permit2/src/interfaces/IAllowanceTransfer.sol";
+// import "@openzeppelin/contracts/utils/math/SafeCast.sol";
+import {SignatureTransfer} from "permit2/src/SignatureTransfer.sol";
+import {ISignatureTransfer} from "permit2/src/interfaces/ISignatureTransfer.sol";
+import {EIP712} from "permit2/src/EIP712.sol";
+import {IAllowanceTransfer} from "permit2/src/interfaces/IAllowanceTransfer.sol";
+import {Test, console} from "forge-std/Test.sol";
 
-contract Example {
-    using SafeCast for uint256;
-    
-    function convertToUint48(uint256 value) public pure returns (uint48) {
-        require(value <= type(uint48).max, "Value exceeds uint48 max");
-        return uint48(value & ((1 << 48) - 1));
-    }
-}
 
-contract PermitExample {
+contract PermitExample is Test {
     bytes32 public constant PERMIT_TYPEHASH =
         keccak256(
             "PermitSingle(PermitDetails details,address spender,uint256 sigDeadline)PermitDetails(address token,uint160 amount,uint48 expiration,uint48 nonce)"

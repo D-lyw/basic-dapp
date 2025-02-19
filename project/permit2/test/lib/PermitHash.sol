@@ -2,6 +2,7 @@
 pragma solidity ^0.8.17;
 
 import {IAllowanceTransfer} from "permit2/src/interfaces/IAllowanceTransfer.sol";
+import {ISignatureTransfer} from "permit2/src/interfaces/ISignatureTransfer.sol";
 
 /// Library for hashing permit2 function and struct parameters
 library PermitHash {
@@ -75,6 +76,29 @@ library PermitHash {
                 )
             );
     }
+
+    // function hash(ISignatureTransfer.PermitTransferFrom memory permit)
+    //     internal
+    //     pure
+    //     returns (bytes32)
+    // {
+    //     return
+    //         keccak256(
+    //             abi.encode(
+    //                 _PERMIT_TRANSFER_FROM_TYPEHASH,
+    //                 keccak256(
+    //                     abi.encode(
+    //                         _TOKEN_PERMISSIONS_TYPEHASH,
+    //                         permit.permitted.token,
+    //                         permit.permitted.amount
+    //                     )
+    //                 ),
+    //                 permit.spender,
+    //                 permit.nonce,
+    //                 permit.deadline
+    //             )
+    //         );
+    // }
 
     function hash(
         IAllowanceTransfer.PermitDetails memory details
