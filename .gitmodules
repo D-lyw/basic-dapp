@@ -7,3 +7,6 @@
 [submodule "project/permit2/lib/permit2"]
 	path = project/permit2/lib/permit2
 	url = https://github.com/Uniswap/permit2
+[submodule "project/flashload/lib/forge-std"]
+	path = project/flashload/lib/forge-std
+	url = https://github.com/foundry-rs/forge-std
