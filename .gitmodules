@@ -10,3 +10,15 @@
 [submodule "project/flashload/lib/forge-std"]
 	path = project/flashload/lib/forge-std
 	url = https://github.com/foundry-rs/forge-std
+[submodule "project/aave-v3-liquidation/lib/forge-std"]
+	path = project/aave-v3-liquidation/lib/forge-std
+	url = https://github.com/foundry-rs/forge-std
+[submodule "project/aave-v3-liquidation/lib/aave-v3-origin"]
+	path = project/aave-v3-liquidation/lib/aave-v3-origin
+	url = https://github.com/aave-dao/aave-v3-origin
+[submodule "project/aave-v3-liquidation/lib/openzeppelin-contracts"]
+	path = project/aave-v3-liquidation/lib/openzeppelin-contracts
+	url = https://github.com/OpenZeppelin/openzeppelin-contracts
+[submodule "project/aave-v3-liquidation/lib/v3-periphery"]
+	path = project/aave-v3-liquidation/lib/v3-periphery
+	url = https://github.com/Uniswap/v3-periphery
