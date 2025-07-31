@@ -15,7 +15,7 @@ source .env
 #     --broadcast \
 #     -vvvv 
 
-部署到 Base 主网
+# 部署到 Base 主网
 forge script script/Deploy.s.sol:DeployScript \
     --rpc-url $BASE_MAINNET_RPC_URL \
     --broadcast \

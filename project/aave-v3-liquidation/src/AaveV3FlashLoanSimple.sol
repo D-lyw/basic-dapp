@@ -4,12 +4,34 @@ pragma solidity ^0.8.13;
 import {IPoolAddressesProvider} from 'aave-v3-origin/src/contracts/interfaces/IPoolAddressesProvider.sol';
 import {IPool} from 'aave-v3-origin/src/contracts/interfaces/IPool.sol';
 import {FlashLoanSimpleReceiverBase} from 'aave-v3-origin/src/contracts/misc/flashloan/base/FlashLoanSimpleReceiverBase.sol';
-import {IERC20} from '@openzeppelin/contracts/token/ERC20/IERC20.sol';
+import {IERC20, IERC20Metadata} from '@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol';
 import {SafeERC20} from '@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol';
 import {IFlashLoanSimpleReceiver} from 'aave-v3-origin/src/contracts/misc/flashloan/interfaces/IFlashLoanSimpleReceiver.sol';
-// import {IAggregationRouterV5} from './interfaces/IAggregationRouterV5.sol';
 import {ReentrancyGuard} from '@openzeppelin/contracts/utils/ReentrancyGuard.sol';
 import {Pausable} from '@openzeppelin/contracts/utils/Pausable.sol';
+
+// Uniswap imports
+import {UniversalRouter} from '@uniswap/universal-router/contracts/UniversalRouter.sol';
+import {Commands} from '@uniswap/universal-router/contracts/libraries/Commands.sol';
+import {IPermit2} from '@uniswap/permit2/src/interfaces/IPermit2.sol';
+import {IPriceOracleGetter} from 'aave-v3-origin/src/contracts/interfaces/IPriceOracleGetter.sol';
+
+// Uniswap V4 相关结构体定义
+struct PoolKey {
+    address currency0;
+    address currency1;
+    uint24 fee;
+    int24 tickSpacing;
+    address hooks;
+}
+
+struct ExactInputSingleParams {
+    PoolKey poolKey;
+    bool zeroForOne;
+    uint128 amountIn;
+    uint128 amountOutMinimum;
+    bytes hookData;
+}
 
 interface IWETH {
     function deposit() external payable;
@@ -41,9 +63,11 @@ contract AaveV3FlashLoanSimple is FlashLoanSimpleReceiverBase, ReentrancyGuard, 
     uint256 private constant MIN_LIQUIDATION_AMOUNT = 1;
     uint256 private constant MAX_BUILDER_PAYMENT_PERCENTAGE = 99; // 最大 Builder 支付比例 99%
 
-    // 1inch 聚合器地址
-    address public immutable AGGREGATION_ROUTER;
+    // Uniswap Universal Router 地址
+    UniversalRouter public immutable UNIVERSAL_ROUTER;
+    IPermit2 public immutable PERMIT2;
     address public immutable WETH;
+    IPriceOracleGetter public immutable ORACLE;
 
     address public immutable owner;
     uint256 public builderPaymentPercentage; // Builder 支付比例
@@ -97,17 +121,23 @@ contract AaveV3FlashLoanSimple is FlashLoanSimpleReceiverBase, ReentrancyGuard, 
 
     constructor(
         address _addressProvider,
-        address _aggregationRouter,
+        address _universalRouter,
+        address _permit2,
         address _weth,
         uint256 _builderPaymentPercentage
     ) FlashLoanSimpleReceiverBase(IPoolAddressesProvider(_addressProvider)) {
         require(_addressProvider != address(0), 'AaveV3FlashLoan: invalid address provider');
-        require(_aggregationRouter != address(0), 'AaveV3FlashLoan: invalid aggregation router');
+        require(_universalRouter != address(0), 'AaveV3FlashLoan: invalid universal router');
+        require(_permit2 != address(0), 'AaveV3FlashLoan: invalid permit2');
         require(_weth != address(0), 'AaveV3FlashLoan: invalid WETH');
         require(_builderPaymentPercentage <= MAX_BUILDER_PAYMENT_PERCENTAGE, 'AaveV3FlashLoan: invalid builder payment percentage');
+
+        // 获取 Aave Oracle 地址
+        ORACLE = IPriceOracleGetter(IPoolAddressesProvider(_addressProvider).getPriceOracle());
         
         owner = msg.sender;
-        AGGREGATION_ROUTER = _aggregationRouter;
+        UNIVERSAL_ROUTER = UniversalRouter(payable(_universalRouter));
+        PERMIT2 = IPermit2(_permit2);
         WETH = _weth;
         builderPaymentPercentage = _builderPaymentPercentage;
     }
@@ -145,9 +175,7 @@ contract AaveV3FlashLoanSimple is FlashLoanSimpleReceiverBase, ReentrancyGuard, 
         address user,
         uint256 debtToCover,
         bool receiveAToken,
-        bytes calldata collateralToDebtSwapData, // 抵押品 -> 债务资产的交换数据
-        bytes calldata debtToWethSwapData,      // 债务资产 -> WETH的交换数据（当债务资产不是WETH时使用）
-        uint256 deadline                        // 交易截止时间
+        uint256 deadline                             // 交易截止时间
     ) external onlyOwner whenNotPaused nonReentrant {
         require(collateralAsset != address(0), 'AaveV3FlashLoan: invalid collateral asset');
         require(debtAsset != address(0), 'AaveV3FlashLoan: invalid debt asset');
@@ -163,8 +191,6 @@ contract AaveV3FlashLoanSimple is FlashLoanSimpleReceiverBase, ReentrancyGuard, 
             collateralAsset,
             user,
             receiveAToken,
-            collateralToDebtSwapData,
-            debtToWethSwapData,
             deadline,
             isDebtAssetWeth
         );
@@ -193,11 +219,9 @@ contract AaveV3FlashLoanSimple is FlashLoanSimpleReceiverBase, ReentrancyGuard, 
             address collateralAsset,
             address user,
             bool receiveAToken,
-            bytes memory collateralToDebtSwapData,
-            bytes memory debtToWethSwapData,
             uint256 deadline,
             bool isDebtAssetWeth
-        ) = abi.decode(params, (address, address, bool, bytes, bytes, uint256, bool));
+        ) = abi.decode(params, (address, address, bool, uint256, bool));
 
         require(block.timestamp <= deadline, 'AaveV3FlashLoan: deadline expired');
 
@@ -209,8 +233,6 @@ contract AaveV3FlashLoanSimple is FlashLoanSimpleReceiverBase, ReentrancyGuard, 
             collateralAsset,
             user,
             receiveAToken,
-            collateralToDebtSwapData,
-            debtToWethSwapData,
             isDebtAssetWeth
         );
 
@@ -224,12 +246,16 @@ contract AaveV3FlashLoanSimple is FlashLoanSimpleReceiverBase, ReentrancyGuard, 
         address collateralAsset,
         address user,
         bool receiveAToken,
-        bytes memory collateralToDebtSwapData,
-        bytes memory debtToWethSwapData,
         bool isDebtAssetWeth
     ) private {
+        // 再次检查用户的健康值是否小于清算阈值
+        (, , , , , uint256 healthFactor) = POOL.getUserAccountData(user);
+        require(
+            healthFactor < 1e18,
+            'AaveV3FlashLoan: user health factor above threshold'
+        );
         // 授权 Aave 使用债务资产
-        IERC20(asset).approve(address(POOL), amount + premium);
+        IERC20(asset).forceApprove(address(POOL), amount + premium);
 
         // 执行清算
         POOL.liquidationCall(
@@ -248,7 +274,8 @@ contract AaveV3FlashLoanSimple is FlashLoanSimpleReceiverBase, ReentrancyGuard, 
         _handleCollateralSwap(
             collateralAsset,
             collateralBalance,
-            collateralToDebtSwapData
+            asset,
+            amount + premium // 需要兑换的债务资产数量（包含闪电贷费用）
         );
 
         // 检查是否有足够的债务资产来偿还闪电贷
@@ -261,7 +288,6 @@ contract AaveV3FlashLoanSimple is FlashLoanSimpleReceiverBase, ReentrancyGuard, 
         // 处理剩余利润
         _handleRemainingProfit(
             asset,
-            debtToWethSwapData,
             collateralAsset,
             user,
             amount,
@@ -274,20 +300,44 @@ contract AaveV3FlashLoanSimple is FlashLoanSimpleReceiverBase, ReentrancyGuard, 
     function _handleCollateralSwap(
         address collateralAsset,
         uint256 collateralBalance,
-        bytes memory swapData
+        address debtAsset,
+        uint256 requiredDebtAmount
     ) private {
-        // 授权 1inch 使用抵押品（先重置授权）
-        IERC20(collateralAsset).approve(AGGREGATION_ROUTER, 0);
-        IERC20(collateralAsset).approve(AGGREGATION_ROUTER, collateralBalance);
+        // 授权 Permit2 使用抵押品
+        IERC20(collateralAsset).forceApprove(address(PERMIT2), collateralBalance);
 
-        // 使用 1inch 将抵押品换成债务资产
-        (bool success, ) = AGGREGATION_ROUTER.call(swapData);
-        require(success, 'AaveV3FlashLoan: collateral to debt swap failed');
+        // 构建 V4_SWAP 命令
+        bytes memory commands = new bytes(1);
+        commands[0] = bytes1(0x10); // V4_SWAP command
+
+        // 构建 PoolKey
+        PoolKey memory poolKey = PoolKey({
+            currency0: collateralAsset,
+            currency1: debtAsset,
+            fee: 3000, // 0.3% fee tier
+            tickSpacing: 60,
+            hooks: address(0)
+        });
+
+        // 构建 ExactInputSingleParams
+        ExactInputSingleParams memory params = ExactInputSingleParams({
+            poolKey: poolKey,
+            zeroForOne: _determineZeroForOne(collateralAsset, debtAsset), // collateralAsset -> debtAsset
+            amountIn: uint128(collateralBalance),
+            amountOutMinimum: uint128(requiredDebtAmount),
+            hookData: ""
+        });
+
+        // 编码参数
+        bytes[] memory inputs = new bytes[](1);
+        inputs[0] = abi.encode(params);
+
+        // 执行兑换
+        UNIVERSAL_ROUTER.execute(commands, inputs);
     }
 
     function _handleRemainingProfit(
         address asset,
-        bytes memory swapData,
         address collateralAsset,
         address user,
         uint256 amount,
@@ -305,14 +355,48 @@ contract AaveV3FlashLoanSimple is FlashLoanSimpleReceiverBase, ReentrancyGuard, 
                 // 如果债务资产就是 WETH，直接转换为 ETH
                 IWETH(WETH).withdraw(remainingDebtAsset);
             } else {
-                // 如果债务资产不是 WETH，需要通过 DEX 兑换成 WETH
-                // 授权 1inch 使用剩余的债务资产（先重置授权）
-                IERC20(asset).approve(AGGREGATION_ROUTER, 0);
-                IERC20(asset).approve(AGGREGATION_ROUTER, remainingDebtAsset);
+                // 如果债务资产不是 WETH，需要通过 Universal Router 兑换成 WETH
+                // 授权 Permit2 使用剩余的债务资产
+                IERC20(asset).forceApprove(address(PERMIT2), remainingDebtAsset);
 
-                // 使用 1inch 将剩余的债务资产兑换成 WETH
-                (bool success, ) = AGGREGATION_ROUTER.call(swapData);
-                require(success, 'AaveV3FlashLoan: debt to WETH swap failed');
+                // 构建 V4_SWAP 命令
+                bytes memory commands = new bytes(1);
+                commands[0] = bytes1(0x10); // V4_SWAP command
+
+                // 构建 PoolKey
+                PoolKey memory poolKey = PoolKey({
+                    currency0: asset,
+                    currency1: WETH,
+                    fee: 3000, // 0.3% fee tier
+                    tickSpacing: 60,
+                    hooks: address(0)
+                });
+
+                // 构建 ExactInputSingleParams
+                ExactInputSingleParams memory params = ExactInputSingleParams({
+                    poolKey: poolKey,
+                    zeroForOne: _determineZeroForOne(asset, WETH), // asset -> WETH
+                    amountIn: uint128(remainingDebtAsset),
+                    // 使用 Aave Oracle 获取代币价格并计算最小 WETH 输出
+                    // 计算顺序：
+                    // 1. remainingDebtAsset * assetPrice * 95% (应用滑点保护)
+                    // 2. 除以 wethPrice
+                    // 3. 调整代币精度：* WETH.decimals / asset.decimals
+                    amountOutMinimum: uint128(
+                        (remainingDebtAsset * ORACLE.getAssetPrice(asset) * 95 / 100) /
+                        ORACLE.getAssetPrice(WETH) *
+                        (10 ** IERC20Metadata(WETH).decimals()) /
+                        (10 ** IERC20Metadata(asset).decimals())
+                    ),
+                    hookData: ""
+                });
+
+                // 编码参数
+                bytes[] memory inputs = new bytes[](1);
+                inputs[0] = abi.encode(params);
+
+                // 执行兑换
+                UNIVERSAL_ROUTER.execute(commands, inputs);
 
                 // 将 WETH 转换成 ETH
                 IWETH(WETH).withdraw(IERC20(WETH).balanceOf(address(this)));
@@ -386,5 +470,32 @@ contract AaveV3FlashLoanSimple is FlashLoanSimpleReceiverBase, ReentrancyGuard, 
     /**
      * @dev Allows receiving ETH
      */
+    /**
+     * @dev 根据代币地址大小确定交易方向
+     * @param fromToken 源代币地址
+     * @param toToken 目标代币地址
+     * @return 如果 fromToken 是内部的 token0，则返回 true；如果 fromToken 是内部的 token1，则返回 false
+     */
+    function _determineZeroForOne(address fromToken, address toToken) internal pure returns (bool) {
+        return uint160(fromToken) < uint160(toToken);
+    }
+
+    /**
+     * @notice 使用 Permit2 授权代币
+     * @param token 要授权的代币地址
+     * @param amount 授权数量
+     * @param expiration 授权过期时间
+     */
+    function approveTokenWithPermit2(
+        address token,
+        uint160 amount,
+        uint48 expiration
+    ) external onlyOwner whenNotPaused {
+        // 首先授权 Permit2 使用代币
+        IERC20(token).forceApprove(address(PERMIT2), type(uint256).max);
+        // 然后通过 Permit2 授权 UniversalRouter
+        PERMIT2.approve(token, address(UNIVERSAL_ROUTER), amount, expiration);
+    }
+
     receive() external payable {}
 }
