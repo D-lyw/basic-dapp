@@ -14,6 +14,7 @@ contract AaveV3FlashLoanSimpleTest is Test {
     address mockUniversalRouter;
     address mockPermit2;
     address mockWeth;
+    address mockUsdc;
     uint256 constant BUILDER_PAYMENT_PERCENTAGE = 60;
 
     function setUp() public {
@@ -22,12 +23,14 @@ contract AaveV3FlashLoanSimpleTest is Test {
         mockUniversalRouter = address(new MockUniversalRouter());
         mockPermit2 = address(new MockPermit2());
         mockWeth = address(new MockWETH());
+        mockUsdc = address(new MockERC20());
         
         liquidation = new AaveV3FlashLoanSimple(
             mockAddressProvider,
             mockUniversalRouter,
             mockPermit2,
             mockWeth,
+            mockUsdc,
             BUILDER_PAYMENT_PERCENTAGE
         );
     }
@@ -37,6 +40,7 @@ contract AaveV3FlashLoanSimpleTest is Test {
         assertEq(address(liquidation.UNIVERSAL_ROUTER()), mockUniversalRouter);
         assertEq(address(liquidation.PERMIT2()), mockPermit2);
         assertEq(liquidation.WETH(), mockWeth);
+        assertEq(liquidation.USDC(), mockUsdc);
         assertEq(liquidation.builderPaymentPercentage(), BUILDER_PAYMENT_PERCENTAGE);
     }
 

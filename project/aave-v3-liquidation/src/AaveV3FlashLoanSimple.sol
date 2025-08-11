@@ -18,6 +18,7 @@ import {IPermit2} from "@uniswap/permit2/src/interfaces/IPermit2.sol";
 import {IPriceOracleGetter} from "aave-v3-origin/src/contracts/interfaces/IPriceOracleGetter.sol";
 import {Actions} from "@uniswap/v4-periphery/src/libraries/Actions.sol";
 import {IV4Router} from "@uniswap/v4-periphery/src/interfaces/IV4Router.sol";
+import {PathKey} from "@uniswap/v4-periphery/src/libraries/PathKey.sol";
 import {PoolKey} from "@uniswap/v4-core/src/types/PoolKey.sol";
 import {Currency} from "@uniswap/v4-core/src/types/Currency.sol";
 import {IHooks} from "@uniswap/v4-core/src/interfaces/IHooks.sol";
@@ -57,14 +58,38 @@ contract AaveV3FlashLoanSimple is
     using SafeERC20 for IERC20;
     using StateLibrary for IPoolManager;
 
-    // 常量定义
+    // 基础常量
     uint16 private constant REFERRAL_CODE = 0;
     uint256 private constant MAX_BUILDER_PAYMENT_PERCENTAGE = 99; // 最大 Builder 支付比例 99%
+
+    // Uniswap V4 费率对应的 tickSpacing
+    uint24 private constant FEE_LOW = 100; // 0.01%
+    uint24 private constant FEE_MEDIUM = 500; // 0.05%
+    uint24 private constant FEE_HIGH = 3000; // 0.3%
+    uint24 private constant FEE_VERY_HIGH = 10000; // 1%
+
+    int24 private constant TICK_SPACING_LOW = 1; // 对应 0.01% 费率
+    int24 private constant TICK_SPACING_MEDIUM = 10; // 对应 0.05% 费率
+    int24 private constant TICK_SPACING_HIGH = 60; // 对应 0.3% 费率
+    int24 private constant TICK_SPACING_VERY_HIGH = 200; // 对应 1% 费率
+
+    /**
+     * @notice 交易路径信息
+     * @param tokens 交易路径中的代币序列
+     * @param fees 每一跳的费用
+     * @param isDirectPath 是否为直接路径
+     */
+    struct SwapPath {
+        address[] tokens; // 交易路径中的代币序列
+        uint24[] fees; // 每一跳的费用
+        bool isDirectPath; // 是否为直接路径
+    }
 
     // Uniswap Universal Router 地址
     UniversalRouter public immutable UNIVERSAL_ROUTER;
     IPermit2 public immutable PERMIT2;
     address public immutable WETH;
+    address public immutable USDC;
     IPriceOracleGetter public immutable ORACLE;
 
     address public immutable owner;
@@ -119,6 +144,7 @@ contract AaveV3FlashLoanSimple is
         address _universalRouter,
         address _permit2,
         address _weth,
+        address _usdc,
         uint256 _builderPaymentPercentage
     ) FlashLoanSimpleReceiverBase(IPoolAddressesProvider(_addressProvider)) {
         require(
@@ -131,6 +157,7 @@ contract AaveV3FlashLoanSimple is
         );
         require(_permit2 != address(0), "AaveV3FlashLoan: invalid permit2");
         require(_weth != address(0), "AaveV3FlashLoan: invalid WETH");
+        require(_usdc != address(0), "AaveV3FlashLoan: invalid USDC");
         require(
             _builderPaymentPercentage <= MAX_BUILDER_PAYMENT_PERCENTAGE,
             "AaveV3FlashLoan: invalid builder payment percentage"
@@ -145,6 +172,7 @@ contract AaveV3FlashLoanSimple is
         UNIVERSAL_ROUTER = UniversalRouter(payable(_universalRouter));
         PERMIT2 = IPermit2(_permit2);
         WETH = _weth;
+        USDC = _usdc;
         builderPaymentPercentage = _builderPaymentPercentage;
     }
 
@@ -371,40 +399,64 @@ contract AaveV3FlashLoanSimple is
             collateralBalance
         );
 
-        // 获取最优费用层级的池子
-        uint24 fee = _getBestPool(
-            collateralAsset,
-            debtAsset
-        );
+        // 查找最佳交易路径
+        SwapPath memory path = _findBestPath(collateralAsset, debtAsset);
 
         // 构建 V4_SWAP 命令
         bytes memory commands = abi.encodePacked(uint8(Commands.V4_SWAP));
 
-        // 构建 PoolKey
-        PoolKey memory poolKey = _buildPoolKey(
-            collateralAsset,
-            debtAsset,
-            fee
-        );
-
         // 构建 Actions 序列
-        bytes memory actions = abi.encodePacked(
-            uint8(Actions.SWAP_EXACT_IN_SINGLE),
-            uint8(Actions.SETTLE_ALL),
-            uint8(Actions.TAKE_ALL)
-        );
+        bytes memory actions;
+        if (path.isDirectPath) {
+            // 直接交易路径
+            actions = abi.encodePacked(
+                uint8(Actions.SWAP_EXACT_IN_SINGLE),
+                uint8(Actions.SETTLE_ALL),
+                uint8(Actions.TAKE_ALL)
+            );
+        } else {
+            // 中转交易路径
+            actions = abi.encodePacked(
+                uint8(Actions.SWAP_EXACT_IN),
+                uint8(Actions.SETTLE_ALL),
+                uint8(Actions.TAKE_ALL)
+            );
+        }
 
         // 准备每个 action 的参数
         bytes[] memory params = new bytes[](3);
-        params[0] = abi.encode(
-            IV4Router.ExactInputSingleParams({
-                poolKey: poolKey,
-                zeroForOne: _determineZeroForOne(collateralAsset, debtAsset),
-                amountIn: uint128(collateralBalance),
-                amountOutMinimum: uint128(requiredDebtAmount),
-                hookData: ""
-            })
-        );
+        if (path.isDirectPath) {
+            // 直接交易参数
+            PoolKey memory poolKey = _buildPoolKey(
+                path.tokens[0],
+                path.tokens[1],
+                path.fees[0]
+            );
+
+            params[0] = abi.encode(
+                IV4Router.ExactInputSingleParams({
+                    poolKey: poolKey,
+                    zeroForOne: _determineZeroForOne(
+                        path.tokens[0],
+                        path.tokens[1]
+                    ),
+                    amountIn: uint128(collateralBalance),
+                    amountOutMinimum: uint128(requiredDebtAmount),
+                    hookData: ""
+                })
+            );
+        } else {
+            // 中转交易参数
+            params[0] = abi.encode(
+                IV4Router.ExactInputParams({
+                    currencyIn: Currency.wrap(path.tokens[0]),
+                    path: _buildPathKeys(path),
+                    amountIn: uint128(collateralBalance),
+                    amountOutMinimum: uint128(requiredDebtAmount)
+                })
+            );
+        }
+
         params[1] = abi.encode(
             Currency.wrap(collateralAsset),
             collateralBalance
@@ -416,7 +468,7 @@ contract AaveV3FlashLoanSimple is
         inputs[0] = abi.encode(actions, params);
 
         // 执行兑换
-        uint256 deadline = block.timestamp + 20;
+        uint256 deadline = block.timestamp + 60;
         try UNIVERSAL_ROUTER.execute(commands, inputs, deadline) {
             // 验证兑换是否成功获得足够的债务资产
             uint256 debtAssetBalance = IERC20(debtAsset).balanceOf(
@@ -466,11 +518,8 @@ contract AaveV3FlashLoanSimple is
                     remainingDebtAsset
                 );
 
-                // 获取最优费用层级的池子
-                uint24 fee = _getBestPool(
-                    asset,
-                    WETH
-                );
+                // 查找最佳交易路径
+                SwapPath memory path = _findBestPath(asset, WETH);
 
                 // 获取价格和精度信息用于计算最小输出金额
                 uint256 inputPrice = ORACLE.getAssetPrice(asset);
@@ -478,11 +527,20 @@ contract AaveV3FlashLoanSimple is
                 uint256 inputDecimals = IERC20Metadata(asset).decimals();
                 uint256 outputDecimals = IERC20Metadata(WETH).decimals();
 
-                require(inputPrice > 0, "AaveV3FlashLoan: invalid input token price");
-                require(outputPrice > 0, "AaveV3FlashLoan: invalid output token price");
+                require(
+                    inputPrice > 0,
+                    "AaveV3FlashLoan: invalid input token price"
+                );
+                require(
+                    outputPrice > 0,
+                    "AaveV3FlashLoan: invalid output token price"
+                );
 
                 // 计算理论上的输出金额（不考虑滑点）
-                uint256 theoreticalAmountOut = (remainingDebtAsset * inputPrice * (10 ** outputDecimals)) / (outputPrice * (10 ** inputDecimals));
+                uint256 theoreticalAmountOut = (remainingDebtAsset *
+                    inputPrice *
+                    (10 ** outputDecimals)) /
+                    (outputPrice * (10 ** inputDecimals));
 
                 // 应用 5% 的滑点保护
                 uint256 minWethOut = (theoreticalAmountOut * 95) / 100;
@@ -492,27 +550,58 @@ contract AaveV3FlashLoanSimple is
                     uint8(Commands.V4_SWAP)
                 );
 
-                // 构建 PoolKey
-                PoolKey memory poolKey = _buildPoolKey(asset, WETH, fee);
-
                 // 构建 Actions 序列
-                bytes memory actions = abi.encodePacked(
-                    uint8(Actions.SWAP_EXACT_IN_SINGLE),
-                    uint8(Actions.SETTLE_ALL),
-                    uint8(Actions.TAKE_ALL)
-                );
+                bytes memory actions;
+                if (path.isDirectPath) {
+                    // 直接交易路径
+                    actions = abi.encodePacked(
+                        uint8(Actions.SWAP_EXACT_IN_SINGLE),
+                        uint8(Actions.SETTLE_ALL),
+                        uint8(Actions.TAKE_ALL)
+                    );
+                } else {
+                    // 中转交易路径
+                    actions = abi.encodePacked(
+                        uint8(Actions.SWAP_EXACT_IN),
+                        uint8(Actions.SETTLE_ALL),
+                        uint8(Actions.TAKE_ALL)
+                    );
+                }
 
                 // 准备每个 action 的参数
                 bytes[] memory params = new bytes[](3);
-                params[0] = abi.encode(
-                    IV4Router.ExactInputSingleParams({
-                        poolKey: poolKey,
-                        zeroForOne: _determineZeroForOne(asset, WETH),
-                        amountIn: uint128(remainingDebtAsset),
-                        amountOutMinimum: uint128(minWethOut),
-                        hookData: ""
-                    })
-                );
+                if (path.isDirectPath) {
+                    // 直接交易参数
+                    PoolKey memory poolKey = _buildPoolKey(
+                        path.tokens[0],
+                        path.tokens[1],
+                        path.fees[0]
+                    );
+
+                    params[0] = abi.encode(
+                        IV4Router.ExactInputSingleParams({
+                            poolKey: poolKey,
+                            zeroForOne: _determineZeroForOne(
+                                path.tokens[0],
+                                path.tokens[1]
+                            ),
+                            amountIn: uint128(remainingDebtAsset),
+                            amountOutMinimum: uint128(minWethOut),
+                            hookData: ""
+                        })
+                    );
+                } else {
+                    // 中转交易参数
+                    params[0] = abi.encode(
+                        IV4Router.ExactInputParams({
+                            currencyIn: Currency.wrap(path.tokens[0]),
+                            path: _buildPathKeys(path),
+                            amountIn: uint128(remainingDebtAsset),
+                            amountOutMinimum: uint128(minWethOut)
+                        })
+                    );
+                }
+
                 params[1] = abi.encode(
                     Currency.wrap(asset),
                     remainingDebtAsset
@@ -524,7 +613,7 @@ contract AaveV3FlashLoanSimple is
                 inputs[0] = abi.encode(actions, params);
 
                 // 执行兑换
-                uint256 deadline = block.timestamp + 20;
+                uint256 deadline = block.timestamp + 60;
                 try UNIVERSAL_ROUTER.execute(commands, inputs, deadline) {
                     // 验证兑换是否成功
                     uint256 wethBalance = IERC20(WETH).balanceOf(address(this));
@@ -532,6 +621,9 @@ contract AaveV3FlashLoanSimple is
                         wethBalance >= minWethOut,
                         "AaveV3FlashLoan: insufficient WETH received"
                     );
+
+                    // 将 WETH 转换成 ETH
+                    IWETH(WETH).withdraw(wethBalance);
                 } catch Error(string memory reason) {
                     revert(
                         string(
@@ -546,9 +638,6 @@ contract AaveV3FlashLoanSimple is
                         "AaveV3FlashLoan: V4 WETH swap failed with unknown error"
                     );
                 }
-
-                // 将 WETH 转换成 ETH
-                IWETH(WETH).withdraw(IERC20(WETH).balanceOf(address(this)));
             }
 
             // 计算从兑换中获得的 ETH（只计算新增的 ETH）
@@ -602,16 +691,18 @@ contract AaveV3FlashLoanSimple is
     ) private view returns (uint24) {
         // 定义常用的费用层级（按流动性从高到低排序）
         uint24[] memory feeTiers = new uint24[](3);
-        feeTiers[0] = 500;   // 0.05% - 稳定币对
-        feeTiers[1] = 3000;  // 0.3%  - 主流代币对
-        feeTiers[2] = 10000; // 1%    - 波动性较大的代币对
+        feeTiers[0] = FEE_MEDIUM;    // 0.05% - 稳定币对
+        feeTiers[1] = FEE_HIGH;      // 0.3%  - 主流代币对
+        feeTiers[2] = FEE_VERY_HIGH; // 1%    - 波动性较大的代币对
 
         uint256 bestLiquidity = 0;
-        uint24 bestFee = 3000; // 默认使用 0.3% 费用层级
+        uint24 bestFee = 0; // 初始化为 0，表示没有找到有效的交易池
 
         // 遍历所有费用层级，找到流动最大的池子
         for (uint256 i = 0; i < feeTiers.length; i++) {
-            try this.getPoolLiquidity(inputToken, outputToken, feeTiers[i]) returns (uint256 liquidity) {
+            try
+                this.getPoolLiquidity(inputToken, outputToken, feeTiers[i])
+            returns (uint256 liquidity) {
                 if (liquidity > bestLiquidity) {
                     bestLiquidity = liquidity;
                     bestFee = feeTiers[i];
@@ -622,7 +713,7 @@ contract AaveV3FlashLoanSimple is
             }
         }
 
-        return bestFee;
+        return bestFee; // 如果没有找到有效的交易池，返回 0
     }
 
     /**
@@ -640,9 +731,12 @@ contract AaveV3FlashLoanSimple is
     ) external view returns (uint256 liquidity) {
         // 构建 PoolKey
         PoolKey memory poolKey = _buildPoolKey(inputToken, outputToken, fee);
-        
+
         // 使用 StateLibrary 获取池子流动性
-        return uint256(UNIVERSAL_ROUTER.poolManager().getLiquidity(poolKey.toId()));
+        return
+            uint256(
+                UNIVERSAL_ROUTER.poolManager().getLiquidity(poolKey.toId())
+            );
     }
 
     /**
@@ -693,6 +787,19 @@ contract AaveV3FlashLoanSimple is
     }
 
     /**
+     * @notice 根据费率获取对应的 tickSpacing
+     * @param fee 费率
+     * @return tickSpacing 对应的 tickSpacing 值
+     */
+    function _getTickSpacingByFee(uint24 fee) private pure returns (int24) {
+        if (fee == FEE_LOW) return TICK_SPACING_LOW;
+        if (fee == FEE_MEDIUM) return TICK_SPACING_MEDIUM;
+        if (fee == FEE_HIGH) return TICK_SPACING_HIGH;
+        if (fee == FEE_VERY_HIGH) return TICK_SPACING_VERY_HIGH;
+        revert("AaveV3FlashLoan: invalid fee tier");
+    }
+
+    /**
      * @notice 构建 Uniswap V4 PoolKey
      * @param tokenA 第一个代币地址
      * @param tokenB 第二个代币地址
@@ -715,7 +822,7 @@ contract AaveV3FlashLoanSimple is
                 currency0: Currency.wrap(token0),
                 currency1: Currency.wrap(token1),
                 fee: fee,
-                tickSpacing: 60,
+                tickSpacing: _getTickSpacingByFee(fee),
                 hooks: IHooks(address(0)) // 使用标准池，无自定义 hooks
             });
     }
@@ -738,6 +845,62 @@ contract AaveV3FlashLoanSimple is
     }
 
     /**
+     * @notice 构建 Uniswap V4 多跳交易的路径键数组
+     * @param path 交易路径信息
+     * @return pathKeys 路径键数组
+     * @dev 根据交易路径中的代币序列和费用序列构建 PathKey 数组
+     */
+    function _buildPathKeys(
+        SwapPath memory path
+    ) private pure returns (PathKey[] memory) {
+        // 缓存数组长度以节省 gas
+        uint256 tokensLength = path.tokens.length;
+        uint256 feesLength = path.fees.length;
+
+        require(tokensLength >= 2, "AaveV3FlashLoan: invalid path length");
+        require(
+            tokensLength == feesLength + 1,
+            "AaveV3FlashLoan: tokens and fees length mismatch"
+        );
+
+        // 使用 unchecked 进行减法操作，因为我们已经验证了 tokensLength >= 2
+        uint256 pathLength;
+        unchecked {
+            pathLength = tokensLength - 1;
+        }
+
+        PathKey[] memory pathKeys = new PathKey[](pathLength);
+        IHooks emptyHooks = IHooks(address(0));
+
+        // 缓存常用值以减少存储读取
+        address[] memory tokens = path.tokens;
+        uint24[] memory fees = path.fees;
+
+        for (uint256 i = 0; i < pathLength; ) {
+            // 缓存下一个代币地址
+            address nextToken;
+            unchecked {
+                nextToken = tokens[i + 1];
+            }
+
+            pathKeys[i] = PathKey({
+                intermediateCurrency: Currency.wrap(nextToken),
+                fee: fees[i],
+                tickSpacing: _getTickSpacingByFee(fees[i]),
+                hooks: emptyHooks,
+                hookData: ""
+            });
+
+            // 使用 unchecked 递增计数器
+            unchecked {
+                ++i;
+            }
+        }
+
+        return pathKeys;
+    }
+
+    /**
      * @notice 获取用户在指定债务资产中的实际债务余额
      * @param debtAsset 债务资产地址
      * @param user 用户地址
@@ -753,5 +916,64 @@ contract AaveV3FlashLoanSimple is
 
         // 返回用户在该债务资产中的实际债务余额
         return IERC20(debtReserveData.variableDebtTokenAddress).balanceOf(user);
+    }
+
+    /**
+     * @notice 查找最佳交易路径
+     * @param tokenIn 输入代币地址
+     * @param tokenOut 输出代币地址
+     * @return path 最佳交易路径，包含代币序列、费用序列和是否为直接路径
+     * @dev 按以下顺序尝试查找路径：
+     *      1. 直接交易路径
+     *      2. 通过 USDC 中转
+     *      3. 通过 WETH 中转
+     */
+    function _findBestPath(
+        address tokenIn,
+        address tokenOut
+    ) private view returns (SwapPath memory path) {
+        // 检查直接交易池
+        uint24 directFee = _getBestPool(tokenIn, tokenOut);
+        if (directFee > 0) {
+            path.tokens = new address[](2);
+            path.tokens[0] = tokenIn;
+            path.tokens[1] = tokenOut;
+            path.fees = new uint24[](1);
+            path.fees[0] = directFee;
+            path.isDirectPath = true;
+            return path;
+        }
+
+        // 尝试通过 USDC 中转
+        uint24 inToUsdcFee = _getBestPool(tokenIn, USDC);
+        uint24 usdcToOutFee = _getBestPool(USDC, tokenOut);
+        if (inToUsdcFee > 0 && usdcToOutFee > 0) {
+            path.tokens = new address[](3);
+            path.tokens[0] = tokenIn;
+            path.tokens[1] = USDC;
+            path.tokens[2] = tokenOut;
+            path.fees = new uint24[](2);
+            path.fees[0] = inToUsdcFee;
+            path.fees[1] = usdcToOutFee;
+            path.isDirectPath = false;
+            return path;
+        }
+
+        // 尝试通过 WETH 中转
+        uint24 inToWethFee = _getBestPool(tokenIn, WETH);
+        uint24 wethToOutFee = _getBestPool(WETH, tokenOut);
+        if (inToWethFee > 0 && wethToOutFee > 0) {
+            path.tokens = new address[](3);
+            path.tokens[0] = tokenIn;
+            path.tokens[1] = WETH;
+            path.tokens[2] = tokenOut;
+            path.fees = new uint24[](2);
+            path.fees[0] = inToWethFee;
+            path.fees[1] = wethToOutFee;
+            path.isDirectPath = false;
+            return path;
+        }
+
+        revert("AaveV3FlashLoan: no valid swap path found");
     }
 }

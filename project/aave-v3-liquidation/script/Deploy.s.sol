@@ -10,15 +10,17 @@ contract DeployScript is Script {
     address constant MAINNET_UNIVERSAL_ROUTER = 0x3fC91A3afd70395Cd496C647d5a6CC9D4B2b7FAD;
     address constant MAINNET_PERMIT2 = 0x000000000022D473030F116dDEE9F6B43aC78BA3;
     address constant MAINNET_WETH = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
+    address constant MAINNET_USDC = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
 
     // Base 链地址
     address constant BASE_ADDRESS_PROVIDER = 0xe20fCBdBfFC4Dd138cE8b2E6FBb6CB49777ad64D;
     address constant BASE_UNIVERSAL_ROUTER = 0x6fF5693b99212Da76ad316178A184AB56D299b43;
     address constant BASE_PERMIT2 = 0x000000000022D473030F116dDEE9F6B43aC78BA3;
     address constant BASE_WETH = 0x4200000000000000000000000000000000000006;
+    address constant BASE_USDC = 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913;
 
-    // 默认 Builder 支付比例 60%
-    uint256 constant DEFAULT_BUILDER_PAYMENT_PERCENTAGE = 60;
+    // 默认 Builder 支付比例 0%
+    uint256 constant DEFAULT_BUILDER_PAYMENT_PERCENTAGE = 0;
 
     function run() public {
         // 默认部署到主网
@@ -36,6 +38,7 @@ contract DeployScript is Script {
             MAINNET_UNIVERSAL_ROUTER,
             MAINNET_PERMIT2,
             MAINNET_WETH,
+            MAINNET_USDC,
             DEFAULT_BUILDER_PAYMENT_PERCENTAGE
         );
 
@@ -51,6 +54,7 @@ contract DeployScript is Script {
             BASE_UNIVERSAL_ROUTER,
             BASE_PERMIT2,
             BASE_WETH,
+            BASE_USDC,
             DEFAULT_BUILDER_PAYMENT_PERCENTAGE
         );
 
