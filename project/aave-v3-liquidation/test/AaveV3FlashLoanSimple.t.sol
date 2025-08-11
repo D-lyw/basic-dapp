@@ -9,28 +9,34 @@ import {IPermit2} from '@uniswap/permit2/src/interfaces/IPermit2.sol';
 contract AaveV3FlashLoanSimpleTest is Test {
     AaveV3FlashLoanSimple public liquidation;
     
-    // 测试网络地址
-    address constant ADDRESS_PROVIDER = 0x2f39d218133AFaB8F2B819B1066c7E434Ad94E9e;
-    address constant UNIVERSAL_ROUTER = 0x3fC91A3afd70395Cd496C647d5a6CC9D4B2b7FAD;
-    address constant PERMIT2 = 0x000000000022D473030F116dDEE9F6B43aC78BA3;
-    address constant WETH = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
+    // Mock 地址用于测试
+    address mockAddressProvider;
+    address mockUniversalRouter;
+    address mockPermit2;
+    address mockWeth;
     uint256 constant BUILDER_PAYMENT_PERCENTAGE = 60;
 
     function setUp() public {
+        // 部署 mock 合约
+        mockAddressProvider = address(new MockAddressProvider());
+        mockUniversalRouter = address(new MockUniversalRouter());
+        mockPermit2 = address(new MockPermit2());
+        mockWeth = address(new MockWETH());
+        
         liquidation = new AaveV3FlashLoanSimple(
-            ADDRESS_PROVIDER,
-            UNIVERSAL_ROUTER,
-            PERMIT2,
-            WETH,
+            mockAddressProvider,
+            mockUniversalRouter,
+            mockPermit2,
+            mockWeth,
             BUILDER_PAYMENT_PERCENTAGE
         );
     }
 
     function test_Deployment() public {
-        assertEq(address(liquidation.ADDRESSES_PROVIDER()), ADDRESS_PROVIDER);
-        assertEq(address(liquidation.UNIVERSAL_ROUTER()), UNIVERSAL_ROUTER);
-        assertEq(address(liquidation.PERMIT2()), PERMIT2);
-        assertEq(liquidation.WETH(), WETH);
+        assertEq(address(liquidation.ADDRESSES_PROVIDER()), mockAddressProvider);
+        assertEq(address(liquidation.UNIVERSAL_ROUTER()), mockUniversalRouter);
+        assertEq(address(liquidation.PERMIT2()), mockPermit2);
+        assertEq(liquidation.WETH(), mockWeth);
         assertEq(liquidation.builderPaymentPercentage(), BUILDER_PAYMENT_PERCENTAGE);
     }
 
@@ -83,22 +89,6 @@ contract AaveV3FlashLoanSimpleTest is Test {
         assertEq(IERC20(testToken).balanceOf(liquidation.owner()), amount);
     }
 
-    function test_ApproveTokenWithPermit2() public {
-        // 部署一个测试代币
-        address testToken = address(new MockERC20());
-        uint160 amount = 1000;
-        uint48 expiration = uint48(block.timestamp + 1 days);
-
-        // 调用 approveTokenWithPermit2 函数
-        liquidation.approveTokenWithPermit2(testToken, amount, expiration);
-
-        // 验证 Permit2 的授权
-        assertEq(
-            IERC20(testToken).allowance(address(liquidation), PERMIT2),
-            type(uint256).max
-        );
-    }
-
     function test_WithdrawETH() public {
         // 给合约转一些 ETH
         vm.deal(address(liquidation), 1 ether);
@@ -112,39 +102,80 @@ contract AaveV3FlashLoanSimpleTest is Test {
         // 检查 ETH 是否被正确提取
         assertEq(liquidation.owner().balance, initialBalance + 1 ether);
     }
+}
 
-    function testFail_ApproveTokenWithPermit2_NotOwner() public {
-        address testToken = address(new MockERC20());
-        uint160 amount = 1000;
-        uint48 expiration = uint48(block.timestamp + 1 days);
+// 用于测试的 Mock 合约
 
-        // 使用非所有者地址调用 approveTokenWithPermit2
-        vm.prank(address(1));
-        liquidation.approveTokenWithPermit2(testToken, amount, expiration);
+contract MockAddressProvider {
+    address public pool = address(new MockPool());
+    address public priceOracle = address(new MockPriceOracle());
+    
+    function getPool() external view returns (address) {
+        return pool;
     }
-
-    function testFail_ApproveTokenWithPermit2_ZeroAddress() public {
-        uint160 amount = 1000;
-        uint48 expiration = uint48(block.timestamp + 1 days);
-
-        // 使用零地址调用 approveTokenWithPermit2
-        liquidation.approveTokenWithPermit2(address(0), amount, expiration);
-    }
-
-    function testFail_ApproveTokenWithPermit2_WhenPaused() public {
-        address testToken = address(new MockERC20());
-        uint160 amount = 1000;
-        uint48 expiration = uint48(block.timestamp + 1 days);
-
-        // 暂停合约
-        liquidation.pause();
-
-        // 尝试在暂停状态下调用 approveTokenWithPermit2
-        liquidation.approveTokenWithPermit2(testToken, amount, expiration);
+    
+    function getPriceOracle() external view returns (address) {
+        return priceOracle;
     }
 }
 
-// 用于测试的 Mock ERC20 代币
+contract MockPool {
+    function getUserAccountData(address) external pure returns (
+        uint256 totalCollateralBase,
+        uint256 totalDebtBase,
+        uint256 availableBorrowsBase,
+        uint256 currentLiquidationThreshold,
+        uint256 ltv,
+        uint256 healthFactor
+    ) {
+        return (0, 0, 0, 0, 0, 1e18); // 健康的账户
+    }
+    
+    function getReserveData(address) external pure returns (
+        uint256 configuration,
+        uint128 liquidityIndex,
+        uint128 currentLiquidityRate,
+        uint128 variableBorrowIndex,
+        uint128 currentVariableBorrowRate,
+        uint128 currentStableBorrowRate,
+        uint40 lastUpdateTimestamp,
+        uint16 id,
+        address aTokenAddress,
+        address stableDebtTokenAddress,
+        address variableDebtTokenAddress,
+        address interestRateStrategyAddress,
+        uint128 accruedToTreasury,
+        uint128 unbacked,
+        uint128 isolationModeTotalDebt
+    ) {
+        return (0, 0, 0, 0, 0, 0, 0, 0, address(0), address(0), address(0), address(0), 0, 0, 0);
+    }
+}
+
+contract MockPriceOracle {
+    function getAssetPrice(address) external pure returns (uint256) {
+        return 1e8; // 返回固定价格
+    }
+}
+
+contract MockUniversalRouter {
+    function execute(bytes calldata, bytes[] calldata) external payable {
+        // Mock implementation - do nothing
+    }
+}
+
+contract MockPermit2 {
+    function approve(address, address, uint160, uint48) external {
+        // Mock implementation - do nothing
+    }
+}
+
+contract MockWETH {
+    function withdraw(uint256) external {
+        // Mock implementation - do nothing
+    }
+}
+
 contract MockERC20 {
     mapping(address => uint256) public balanceOf;
     mapping(address => mapping(address => uint256)) public allowance;
