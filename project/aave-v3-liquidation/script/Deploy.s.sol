@@ -35,8 +35,7 @@ contract DeployScript is Script {
 
         new AaveV3FlashLoanSimple(
             MAINNET_ADDRESS_PROVIDER,
-            MAINNET_UNIVERSAL_ROUTER,
-            MAINNET_PERMIT2,
+            address(0), // TODO: Deploy MultiVersionUniswapRouter first
             MAINNET_WETH,
             MAINNET_USDC,
             DEFAULT_BUILDER_PAYMENT_PERCENTAGE
@@ -51,8 +50,7 @@ contract DeployScript is Script {
 
         new AaveV3FlashLoanSimple(
             BASE_ADDRESS_PROVIDER,
-            BASE_UNIVERSAL_ROUTER,
-            BASE_PERMIT2,
+            address(0), // TODO: Deploy MultiVersionUniswapRouter first
             BASE_WETH,
             BASE_USDC,
             DEFAULT_BUILDER_PAYMENT_PERCENTAGE

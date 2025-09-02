@@ -28,7 +28,6 @@ contract AaveV3FlashLoanSimpleTest is Test {
         liquidation = new AaveV3FlashLoanSimple(
             mockAddressProvider,
             mockUniversalRouter,
-            mockPermit2,
             mockWeth,
             mockUsdc,
             BUILDER_PAYMENT_PERCENTAGE
@@ -37,8 +36,7 @@ contract AaveV3FlashLoanSimpleTest is Test {
 
     function test_Deployment() public {
         assertEq(address(liquidation.ADDRESSES_PROVIDER()), mockAddressProvider);
-        assertEq(address(liquidation.UNIVERSAL_ROUTER()), mockUniversalRouter);
-        assertEq(address(liquidation.PERMIT2()), mockPermit2);
+        assertEq(address(liquidation.MULTI_ROUTER()), mockUniversalRouter);
         assertEq(liquidation.WETH(), mockWeth);
         assertEq(liquidation.USDC(), mockUsdc);
         assertEq(liquidation.builderPaymentPercentage(), BUILDER_PAYMENT_PERCENTAGE);
@@ -50,12 +48,14 @@ contract AaveV3FlashLoanSimpleTest is Test {
         assertEq(liquidation.builderPaymentPercentage(), newPercentage);
     }
 
-    function testFail_UpdateBuilderPaymentPercentage_NotOwner() public {
+    function test_RevertWhen_UpdateBuilderPaymentPercentage_NotOwner() public {
+        vm.expectRevert('AaveV3FlashLoan: caller is not the owner');
         vm.prank(address(1));
         liquidation.updateBuilderPaymentPercentage(70);
     }
 
-    function testFail_UpdateBuilderPaymentPercentage_TooHigh() public {
+    function test_RevertWhen_UpdateBuilderPaymentPercentage_TooHigh() public {
+        vm.expectRevert('AaveV3FlashLoan: invalid builder payment percentage');
         liquidation.updateBuilderPaymentPercentage(100);
     }
 
@@ -67,13 +67,15 @@ contract AaveV3FlashLoanSimpleTest is Test {
         assertFalse(liquidation.paused());
     }
 
-    function testFail_Pause_NotOwner() public {
+    function test_RevertWhen_Pause_NotOwner() public {
+        vm.expectRevert('AaveV3FlashLoan: caller is not the owner');
         vm.prank(address(1));
         liquidation.pause();
     }
 
-    function testFail_Unpause_NotOwner() public {
+    function test_RevertWhen_Unpause_NotOwner() public {
         liquidation.pause();
+        vm.expectRevert('AaveV3FlashLoan: caller is not the owner');
         vm.prank(address(1));
         liquidation.unpause();
     }
@@ -98,14 +100,17 @@ contract AaveV3FlashLoanSimpleTest is Test {
         vm.deal(address(liquidation), 1 ether);
         
         // 记录初始余额
-        uint256 initialBalance = address(this).balance;
+        uint256 initialBalance = liquidation.owner().balance;
         
         // 提取 ETH
-        liquidation.withdrawETH(0);
+        liquidation.withdrawETH(1 ether);
         
         // 检查 ETH 是否被正确提取
         assertEq(liquidation.owner().balance, initialBalance + 1 ether);
     }
+    
+    // 添加 receive 函数以接收 ETH
+    receive() external payable {}
 }
 
 // 用于测试的 Mock 合约
