@@ -48,15 +48,16 @@ contract AaveV3FlashLoanSimple is
     // 基础常量
     uint16 private constant REFERRAL_CODE = 0;
     uint256 private constant MAX_BUILDER_PAYMENT_PERCENTAGE = 99; // 最大 Builder 支付比例 99%
+    uint256 private constant SLIPPAGE_TOLERANCE = 95; // 滑点容忍度 95%
+    uint256 private constant PERCENTAGE_BASE = 100; // 百分比基数
 
     // MultiVersionUniswapRouter 地址
     MultiVersionUniswapRouter public immutable MULTI_ROUTER;
     address public immutable WETH;
-    address public immutable USDC;
     IPriceOracleGetter public immutable ORACLE;
 
     address public immutable owner;
-    uint256 public builderPaymentPercentage; // Builder 支付比例
+    uint96 public builderPaymentPercentage; // Builder 支付比例 (打包优化: uint96 + address = 32字节)
 
     // 事件定义
     event LiquidationExecuted(
@@ -106,7 +107,6 @@ contract AaveV3FlashLoanSimple is
         address _addressProvider,
         address _multiRouter,
         address _weth,
-        address _usdc,
         uint256 _builderPaymentPercentage
     ) FlashLoanSimpleReceiverBase(IPoolAddressesProvider(_addressProvider)) {
         require(
@@ -118,7 +118,6 @@ contract AaveV3FlashLoanSimple is
             'AaveV3FlashLoan: invalid multi router'
         );
         require(_weth != address(0), 'AaveV3FlashLoan: invalid WETH');
-        require(_usdc != address(0), 'AaveV3FlashLoan: invalid USDC');
         require(
             _builderPaymentPercentage <= MAX_BUILDER_PAYMENT_PERCENTAGE,
             'AaveV3FlashLoan: invalid builder payment percentage'
@@ -132,8 +131,7 @@ contract AaveV3FlashLoanSimple is
         owner = msg.sender;
         MULTI_ROUTER = MultiVersionUniswapRouter(payable(_multiRouter));
         WETH = _weth;
-        USDC = _usdc;
-        builderPaymentPercentage = _builderPaymentPercentage;
+        builderPaymentPercentage = uint96(_builderPaymentPercentage);
     }
 
     /**
@@ -148,7 +146,7 @@ contract AaveV3FlashLoanSimple is
             'AaveV3FlashLoan: invalid builder payment percentage'
         );
         uint256 oldPercentage = builderPaymentPercentage;
-        builderPaymentPercentage = _newPercentage;
+        builderPaymentPercentage = uint96(_newPercentage);
         emit BuilderPaymentPercentageUpdated(oldPercentage, _newPercentage);
     }
 
@@ -183,6 +181,14 @@ contract AaveV3FlashLoanSimple is
         );
         require(debtAsset != address(0), 'AaveV3FlashLoan: invalid debt asset');
         require(user != address(0), 'AaveV3FlashLoan: invalid user address');
+        
+        // 最早检查用户健康因子，避免不必要的后续计算和外部调用
+        (, , , , , uint256 healthFactor) = POOL.getUserAccountData(user);
+        require(
+            healthFactor < 1e18,
+            'AaveV3FlashLoan: user health factor above threshold'
+        );
+        
         require(
             collateralAsset != debtAsset,
             'AaveV3FlashLoan: collateral and debt cannot be same asset'
@@ -190,13 +196,6 @@ contract AaveV3FlashLoanSimple is
         require(
             deadline > block.timestamp,
             'AaveV3FlashLoan: deadline expired'
-        );
-
-        // 提前检查用户的健康值是否小于清算阈值，避免不必要的闪电贷
-        (, , , , , uint256 healthFactor) = POOL.getUserAccountData(user);
-        require(
-            healthFactor < 1e18,
-            'AaveV3FlashLoan: user health factor above threshold'
         );
 
         uint256 actualDebtToCover = debtToCover;
@@ -259,7 +258,12 @@ contract AaveV3FlashLoanSimple is
             'AaveV3FlashLoan: deadline expired'
         );
 
-        // 执行清算流程
+        // 预计算总授权金额（清算 + 闪电贷还款）并一次性授权
+        // 这样可以减少 forceApprove 调用次数
+        uint256 totalAuthAmount = amount + (amount + premium);
+        IERC20(asset).forceApprove(address(POOL), totalAuthAmount);
+
+        // 执行清算
         _executeLiquidation(
             asset,
             amount,
@@ -269,9 +273,6 @@ contract AaveV3FlashLoanSimple is
             receiveAToken,
             isDebtAssetWeth
         );
-
-        // 授权 Pool 扣除闪电贷还款（本金 + 费用）
-        IERC20(asset).forceApprove(address(POOL), amount + premium);
 
         return true;
     }
@@ -288,8 +289,7 @@ contract AaveV3FlashLoanSimple is
         // 记录清算前的债务资产余额
         uint256 debtAssetBalanceBefore = IERC20(asset).balanceOf(address(this));
 
-        // 授权 Aave 使用债务资产
-        IERC20(asset).forceApprove(address(POOL), amount + premium);
+        // 授权已在 executeOperation 中完成，无需重复授权
 
         // 执行清算 - Aave 会根据抵押资产限制决定实际清算数量
         POOL.liquidationCall(
@@ -405,127 +405,114 @@ contract AaveV3FlashLoanSimple is
         bool isDebtAssetWeth,
         uint256 remainingDebtAsset
     ) private {
-        // 记录兑换前的 ETH 余额
-            uint256 ethBalanceBefore = address(this).balance;
-
-            if (isDebtAssetWeth) {
-                // 如果债务资产就是 WETH，直接转换为 ETH
-                IWETH(WETH).withdraw(remainingDebtAsset);
-            } else {
-                // 如果债务资产不是 WETH，需要通过 MultiVersionUniswapRouter 兑换成 WETH
-                // 授权 MultiVersionUniswapRouter 使用剩余的债务资产
-                IERC20(asset).forceApprove(
-                    address(MULTI_ROUTER),
-                    remainingDebtAsset
-                );
-
-                // 获取价格和精度信息用于计算最小输出金额
-                uint256 inputPrice = ORACLE.getAssetPrice(asset);
-                uint256 outputPrice = ORACLE.getAssetPrice(WETH);
-                uint256 inputDecimals = IERC20Metadata(asset).decimals();
-                uint256 outputDecimals = IERC20Metadata(WETH).decimals();
-
-                require(
-                    inputPrice > 0,
-                    'AaveV3FlashLoan: invalid input token price'
-                );
-                require(
-                    outputPrice > 0,
-                    'AaveV3FlashLoan: invalid output token price'
-                );
-
-                // 计算理论上的输出金额（不考虑滑点）
-                uint256 theoreticalAmountOut = (remainingDebtAsset *
-                    inputPrice *
-                    (10 ** outputDecimals)) /
-                    (outputPrice * (10 ** inputDecimals));
-
-                // 应用 5% 的滑点保护
-                uint256 minWethOut = (theoreticalAmountOut * 95) / 100;
-
-                // 使用 MultiVersionUniswapRouter 执行兑换
-                try MULTI_ROUTER.swapExactTokensForTokens(
-                    asset,
-                    WETH,
-                    remainingDebtAsset,
-                    minWethOut,
-                    address(this)
-                ) returns (uint256 wethReceived) {
-                    // 将 WETH 转换成 ETH
-                    IWETH(WETH).withdraw(wethReceived);
-                } catch Error(string memory reason) {
-                    revert(
-                        string(
-                            abi.encodePacked(
-                                'AaveV3FlashLoan: Multi-version WETH swap failed - ',
-                                reason
-                            )
-                        )
-                    );
-                } catch {
-                    revert(
-                        'AaveV3FlashLoan: Multi-version WETH swap failed with unknown error'
-                    );
-                }
-            }
-
-            // 计算从兑换中获得的 ETH（只计算新增的 ETH）
-            uint256 ethBalanceAfter = address(this).balance;
-            uint256 profitEth = ethBalanceAfter - ethBalanceBefore;
-
-            if (profitEth > 0) {
-                uint256 builderPayment = (profitEth *
-                    builderPaymentPercentage) / 100;
-
-                if (builderPayment > 0) {
-                    // 支付给 Builder
-                    (bool success, ) = block.coinbase.call{
-                        value: builderPayment
-                    }(new bytes(0));
-                    if (!success) {
-                        emit BuilderPaymentFailed(
-                            block.coinbase,
-                            builderPayment,
-                            'Builder payment failed'
-                        );
-                    }
-                }
-
-                emit LiquidationExecuted(
-                    collateralAsset,
-                    asset,
-                    user,
-                    amount,
-                    collateralBalance,
-                    premium,
-                    remainingDebtAsset,
-                    builderPayment,
-                    0, // owner 不立即获得支付，ETH 留在合约中
-                    block.timestamp
-                );
-            }
-    }
-
-    /**
-     * @notice 获取两个代币之间最佳的交易池费用层级
-     * @param inputToken 输入代币地址
-     * @param outputToken 输出代币地址
-     * @return 最佳费用层级，默认返回 3000 (0.3%)
-     * @dev 简化版本，直接返回常用的 0.3% 费率，由 MultiVersionUniswapRouter 处理路径选择
-     */
-    function _getBestPool(
-        address inputToken,
-        address outputToken
-    ) private pure returns (uint24) {
-        // 避免未使用参数警告
-        inputToken;
-        outputToken;
+        // 缓存状态变量到内存以节省 gas
+        uint256 cachedBuilderPaymentPercentage = builderPaymentPercentage;
         
-        // 返回最常用的 0.3% 费率，让 MultiVersionUniswapRouter 处理具体的路径选择
-        return 3000;
+        // 记录兑换前的 ETH 余额
+        uint256 ethBalanceBefore = address(this).balance;
+
+        if (isDebtAssetWeth) {
+            // 如果债务资产就是 WETH，直接转换为 ETH
+            IWETH(WETH).withdraw(remainingDebtAsset);
+        } else {
+            // 优化：预先获取价格和精度信息，合并验证
+            uint256 inputPrice = ORACLE.getAssetPrice(asset);
+            uint256 outputPrice = ORACLE.getAssetPrice(WETH);
+            
+            // 合并价格验证，减少条件检查次数
+            require(
+                inputPrice > 0 && outputPrice > 0,
+                'AaveV3FlashLoan: invalid token prices'
+            );
+            
+            // 批量获取精度信息
+            uint256 inputDecimals = IERC20Metadata(asset).decimals();
+            uint256 outputDecimals = IERC20Metadata(WETH).decimals();
+
+            // 优化：预计算常用值，减少重复计算
+            uint256 inputPriceScaled = inputPrice * (10 ** outputDecimals);
+            uint256 outputPriceScaled = outputPrice * (10 ** inputDecimals);
+            
+            // 计算理论上的输出金额（优化版本）
+            uint256 theoreticalAmountOut = (remainingDebtAsset * inputPriceScaled) / outputPriceScaled;
+
+            // 应用 5% 的滑点保护
+            uint256 minWethOut = (theoreticalAmountOut * SLIPPAGE_TOLERANCE) / PERCENTAGE_BASE;
+
+            // 授权 MultiVersionUniswapRouter 使用剩余的债务资产
+            IERC20(asset).forceApprove(address(MULTI_ROUTER), remainingDebtAsset);
+
+            // 使用 MultiVersionUniswapRouter 执行兑换
+            try MULTI_ROUTER.swapExactTokensForTokens(
+                asset,
+                WETH,
+                remainingDebtAsset,
+                minWethOut,
+                address(this)
+            ) returns (uint256 wethReceived) {
+                // 将 WETH 转换成 ETH
+                IWETH(WETH).withdraw(wethReceived);
+            } catch Error(string memory reason) {
+                revert(
+                    string(
+                        abi.encodePacked(
+                            'AaveV3FlashLoan: Multi-version WETH swap failed - ',
+                            reason
+                        )
+                    )
+                );
+            } catch {
+                revert(
+                    'AaveV3FlashLoan: Multi-version WETH swap failed with unknown error'
+                );
+            }
+        }
+
+        // 计算从兑换中获得的 ETH（只计算新增的 ETH）
+        uint256 ethBalanceAfter = address(this).balance;
+        uint256 profitEth = ethBalanceAfter - ethBalanceBefore;
+
+        // 优化：提前检查是否有利润，避免不必要的计算
+        if (profitEth > 0 && cachedBuilderPaymentPercentage > 0) {
+            // 只有当 cachedBuilderPaymentPercentage > 0 时才计算 builderPayment
+            uint256 builderPayment = (profitEth * cachedBuilderPaymentPercentage) / PERCENTAGE_BASE;
+            
+            // 支付给 Builder
+            (bool success, ) = block.coinbase.call{value: builderPayment}(new bytes(0));
+            if (!success) {
+                emit BuilderPaymentFailed(
+                    block.coinbase,
+                    builderPayment,
+                    'Builder payment failed'
+                );
+            }
+            emit LiquidationExecuted(
+                collateralAsset,
+                asset,
+                user,
+                amount,
+                collateralBalance,
+                premium,
+                remainingDebtAsset,
+                builderPayment,
+                profitEth, 
+                block.timestamp
+            );
+        } else {
+             emit LiquidationExecuted(
+                collateralAsset,
+                asset,
+                user,
+                amount,
+                collateralBalance,
+                premium,
+                remainingDebtAsset,
+                0,
+                profitEth, 
+                block.timestamp
+            );
+        }
     }
-
-
 
     /**
      * @dev Allows receiving ETH
@@ -574,8 +561,6 @@ contract AaveV3FlashLoanSimple is
         );
     }
 
-
-
     /**
      * @notice 获取用户在指定债务资产中的实际债务余额
      * @param debtAsset 债务资产地址
@@ -593,6 +578,4 @@ contract AaveV3FlashLoanSimple is
         // 返回用户在该债务资产中的实际债务余额
         return IERC20(debtReserveData.variableDebtTokenAddress).balanceOf(user);
     }
-
-
 }

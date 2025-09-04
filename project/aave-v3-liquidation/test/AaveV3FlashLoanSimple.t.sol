@@ -29,7 +29,6 @@ contract AaveV3FlashLoanSimpleTest is Test {
             mockAddressProvider,
             mockUniversalRouter,
             mockWeth,
-            mockUsdc,
             BUILDER_PAYMENT_PERCENTAGE
         );
     }
@@ -38,7 +37,7 @@ contract AaveV3FlashLoanSimpleTest is Test {
         assertEq(address(liquidation.ADDRESSES_PROVIDER()), mockAddressProvider);
         assertEq(address(liquidation.MULTI_ROUTER()), mockUniversalRouter);
         assertEq(liquidation.WETH(), mockWeth);
-        assertEq(liquidation.USDC(), mockUsdc);
+
         assertEq(liquidation.builderPaymentPercentage(), BUILDER_PAYMENT_PERCENTAGE);
     }
 

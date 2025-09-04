@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: UNLICENSED
-pragma solidity ^0.8.17;
+pragma solidity ^0.8.26;
 
 import {IERC20, IERC20Metadata} from '@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol';
 import {SafeERC20} from '@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol';
@@ -178,13 +178,13 @@ contract MultiVersionUniswapRouter is ReentrancyGuard, Ownable {
         uint256 amountOutMinimum,
         address recipient
     ) external nonReentrant returns (uint256 amountOut) {
-        require(tokenIn != tokenOut, 'MultiVersionRouter: same token swap');
-        require(amountIn > 0, 'MultiVersionRouter: invalid amount');
-        require(recipient != address(0), 'MultiVersionRouter: invalid recipient');
+        require(tokenIn != tokenOut, 'Same token swap');
+        require(amountIn > 0, 'Invalid amount');
+        require(recipient != address(0), 'Invalid recipient');
         
         // 检查用户余额，避免授权但余额不足时浪费 gas
         uint256 userBalance = IERC20(tokenIn).balanceOf(msg.sender);
-        require(userBalance >= amountIn, 'MultiVersionRouter: insufficient balance');
+        require(userBalance >= amountIn, 'Insufficient balance');
 
         // 将代币预先转入 Universal Router，使用 payerIsUser=false 由 Universal Router 自有余额支付
         IERC20(tokenIn).safeTransferFrom(msg.sender, address(UNIVERSAL_ROUTER), amountIn);
@@ -203,14 +203,14 @@ contract MultiVersionUniswapRouter is ReentrancyGuard, Ownable {
         } else if (bestPath.version == UniswapVersion.V4) {
             _swapV4Universal(bestPath, amountIn, amountOutMinimum, recipient);
         } else {
-            revert('MultiVersionRouter: no valid swap path found');
+            revert('No valid swap path');
         }
 
         // 计算实际输出数量
         uint256 balanceAfter = IERC20(tokenOut).balanceOf(recipient);
         amountOut = balanceAfter - balanceBefore;
 
-        require(amountOut >= amountOutMinimum, 'MultiVersionRouter: insufficient output amount');
+        require(amountOut >= amountOutMinimum, 'Insufficient output amount');
 
         emit SwapExecuted(tokenIn, tokenOut, amountIn, amountOut, bestPath.version, recipient);
     }
@@ -471,7 +471,7 @@ contract MultiVersionUniswapRouter is ReentrancyGuard, Ownable {
     function _buildV4PathKeys(
         SwapPath memory path
     ) private pure returns (PathKey[] memory pathKeys) {
-        require(path.tokens.length >= 3, 'MultiVersionRouter: invalid path length');
+        require(path.tokens.length >= 3, 'Invalid path length');
         
         pathKeys = new PathKey[](path.tokens.length - 2);
         for (uint256 i = 0; i < pathKeys.length; i++) {
@@ -682,7 +682,7 @@ contract MultiVersionUniswapRouter is ReentrancyGuard, Ownable {
         if (fee == FEE_MEDIUM) return TICK_SPACING_MEDIUM;
         if (fee == FEE_HIGH) return TICK_SPACING_HIGH;
         if (fee == FEE_VERY_HIGH) return TICK_SPACING_VERY_HIGH;
-        revert('MultiVersionRouter: invalid fee tier');
+        revert('Invalid fee tier');
     }
 
     /**

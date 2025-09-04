@@ -16,6 +16,7 @@ import {IPoolAddressesProvider} from 'aave-v3-origin/src/contracts/interfaces/IP
 contract AaveV3FlashLoanSimpleIntegrationTest is Test {
     AaveV3FlashLoanSimple public liquidation;
     MultiVersionUniswapRouter public multiRouter;
+    address public deployer;
     
     // Base Mainnet 地址
     address constant AAVE_POOL_ADDRESSES_PROVIDER = 0xe20fCBdBfFC4Dd138cE8b2E6FBb6CB49777ad64D;
@@ -32,7 +33,7 @@ contract AaveV3FlashLoanSimpleIntegrationTest is Test {
     address constant POOL_MANAGER = 0x8C4BcBE6b9eF47855f97E675296FA3F6fafa5F1A;
     
     uint256 constant BUILDER_PAYMENT_PERCENTAGE = 0;
-    uint256 constant FORK_BLOCK_NUMBER = 34986776;
+    uint256 constant FORK_BLOCK_NUMBER = 34982557;
     
     function setUp() public {
         // 创建 Base mainnet fork
@@ -41,7 +42,7 @@ contract AaveV3FlashLoanSimpleIntegrationTest is Test {
         
         // 获取部署者私钥和地址
         uint256 deployerPrivateKey = vm.envUint('PRIVATE_KEY');
-        address deployer = vm.addr(deployerPrivateKey);
+        deployer = vm.addr(deployerPrivateKey);
         
         console2.log('Deployer address:', deployer);
         
@@ -62,7 +63,6 @@ contract AaveV3FlashLoanSimpleIntegrationTest is Test {
             AAVE_POOL_ADDRESSES_PROVIDER,
             address(multiRouter),
             WETH,
-            USDC,
             BUILDER_PAYMENT_PERCENTAGE
         );
         vm.stopPrank();
@@ -80,7 +80,7 @@ contract AaveV3FlashLoanSimpleIntegrationTest is Test {
         assertEq(address(liquidation.MULTI_ROUTER()), address(multiRouter));
         assertEq(address(liquidation.ADDRESSES_PROVIDER()), AAVE_POOL_ADDRESSES_PROVIDER);
         assertEq(liquidation.WETH(), WETH);
-        assertEq(liquidation.USDC(), USDC);
+
         assertEq(liquidation.builderPaymentPercentage(), BUILDER_PAYMENT_PERCENTAGE);
         
         // 验证 MultiVersionUniswapRouter 配置
@@ -114,14 +114,16 @@ contract AaveV3FlashLoanSimpleIntegrationTest is Test {
      */
     function test_AccessControl() public {
         // 验证 liquidation 合约的 owner
-        assertEq(liquidation.owner(), address(this));
+        assertEq(liquidation.owner(), deployer);
         
-        // 验证合约可以暂停和恢复
+        // 以部署者身份验证合约可以暂停和恢复
+        vm.startPrank(deployer);
         liquidation.pause();
         assertTrue(liquidation.paused());
         
         liquidation.unpause();
         assertFalse(liquidation.paused());
+        vm.stopPrank();
         
         console2.log('Access control verified successfully');
     }
@@ -138,7 +140,6 @@ contract AaveV3FlashLoanSimpleIntegrationTest is Test {
         
         // 验证代币地址
         assertTrue(liquidation.WETH() != address(0), 'WETH address should not be zero');
-        assertTrue(liquidation.USDC() != address(0), 'USDC address should not be zero');
         
         console2.log('Contract addresses verified successfully');
     }
@@ -147,7 +148,7 @@ contract AaveV3FlashLoanSimpleIntegrationTest is Test {
     function test_CallLiquidation() public {
         // 获取部署者私钥和地址
         uint256 deployerPrivateKey = vm.envUint('PRIVATE_KEY');
-        address deployer = vm.addr(deployerPrivateKey);
+        address deployerAddr = vm.addr(deployerPrivateKey);
         
         console2.log('Deployer address:', deployer);
         console2.log('Contract owner:', liquidation.owner());
@@ -159,10 +160,10 @@ contract AaveV3FlashLoanSimpleIntegrationTest is Test {
         IPool pool = IPool(IPoolAddressesProvider(AAVE_POOL_ADDRESSES_PROVIDER).getPool());
         
         // 使用预定义的清算参数
-        address debtAsset = 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913;           // 债务资产 
-        address collateralAsset = 0x4200000000000000000000000000000000000006; // 抵押品资产 
-        address user = 0x3185bB73AfD7f38FC98F0E6a72668F531D29B099;                   // 被清算用户
-        uint256 debtToCoverAmount = 8588757;   // 要清算的债务数量（减少到避免 dust 错误）
+        address debtAsset = 0x2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0DEc22;           // 债务资产 
+        address collateralAsset = 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913; // 抵押品资产 
+        address user = 0x196bFAc62dF1f91718fDdC26ECf1B1967D4d2cB5;                   // 被清算用户
+        uint256 debtToCoverAmount = 21912517572137;   // 要清算的债务数量（减少到避免 dust 错误）
         
         // 检查测试用户的健康因子
         (, , , , , uint256 healthFactor) = pool.getUserAccountData(user);
@@ -179,7 +180,7 @@ contract AaveV3FlashLoanSimpleIntegrationTest is Test {
         
         bool receiveAToken = false;       // 不接收 aToken，直接接收底层资产
         uint256 deadline = block.timestamp + 300; // 5分钟后过期
-        bool useMaxDebt = true;           // 使用最大债务清算，让 Aave 决定清算数量
+        bool useMaxDebt = false;           // 使用最大债务清算，让 Aave 决定清算数量
         
         console2.log('Attempting liquidation with parameters:');
         console2.log('  Collateral Asset:', collateralAsset);
